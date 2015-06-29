@@ -406,7 +406,10 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 			get { return !string.IsNullOrWhiteSpace(HeaderName) && Headers.All(h => !h.Name.Equals(HeaderName, StringComparison.OrdinalIgnoreCase)); }
 		}
 
-		#endregion
+	    private const int MaxReauthorizeAttemptCount = 2;
+	    private int ReauthorizeAttemptCount { get; set; }
+
+	    #endregion
 
 		public AppViewModel()
 		{
@@ -609,7 +612,42 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 			Send();
 		}
 
-		public async void Send()
+	    public async void ResendTask()
+	    {            
+	        var tokenIsRefreshed = await RefreshToken();
+            if (tokenIsRefreshed)
+                Send();
+	    }
+
+	    public async Task<bool> RefreshToken()
+	    {
+            if (SelectedToken == null || SelectedToken.AuthCredentials == null)
+            {
+                var dialogResult = await _dialogManager.Show("Select token", "You need to choose a token first");                
+                return false;
+            }
+
+            //_dialogManager.Show("Please wait", "Refreshing the token...");
+            var result = SelectedToken.AuthCredentials.Authorize();
+
+			if (result.HasError)
+			{
+                var dialogResult = await _dialogManager.Show("Oops", "Try to recreate the token. \n\n" + result.Error);
+                return false;
+			}
+
+			var response = JsonConvert.SerializeObject(result.AuthorizationState, Formatting.Indented);
+            SelectedToken.SetAuthorizationState(result.AuthorizationState);            
+
+            var message = new TokenAdded{
+                NamedAuthorizationState = SelectedToken
+            };
+
+            _bus.PublishOnUIThread(message);
+            return true;
+	    }
+
+	    public async void Send()
 		{
 			if (!CanSend)
 				return;
@@ -633,6 +671,7 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 				request.NamedAuthorizationState = SelectedToken;
 
 			CancellationTokenSource = new CancellationTokenSource();
+	        var authIsFailed = false;
 
 			try
 			{
@@ -666,9 +705,16 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 					Headers = responseHeaders
 				};
 
-				AddToHistory(request);
+			    authIsFailed = IsAuthenticationFailed(response.Content);
 
-				DisplayRequest(request);
+			    if (!authIsFailed && (ReauthorizeAttemptCount < MaxReauthorizeAttemptCount))
+			    {
+			        ReauthorizeAttemptCount++;
+			        AddToHistory(request);
+			        DisplayRequest(request);
+			    }
+			    else
+			        ReauthorizeAttemptCount = 0;
 			}
 			catch (OperationCanceledException)
 			{
@@ -677,9 +723,18 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 			{
 				CancellationTokenSource = null;
 			}
+
+            if (authIsFailed)
+                ResendTask();
 		}
 
-		public void Cancel()
+	    private bool IsAuthenticationFailed(string response)
+	    {
+	        return response.ToUpper().Contains("OBJECT MOVED") &&
+                   response.ToUpper().Contains("ACCOUNT/SIGN-IN");
+	    }
+
+	    public void Cancel()
 		{
 			var cts = CancellationTokenSource;
 			if (cts != null)

@@ -14,6 +14,7 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 	public class AddTokenViewModel : Screen, IHandle<ConfigurationLoaded>
 	{
 		private IAuthorizationState _authorizationState;
+        private AuthCredentials _authCredentials;
 
 		private readonly IEventAggregator _bus;
 		private readonly IWindowManager _windowManager;
@@ -167,11 +168,19 @@ namespace LIC.Malone.Client.Desktop.ViewModels
 
 			Response.Text = JsonConvert.SerializeObject(result.AuthorizationState, Formatting.Indented);
 			_authorizationState = result.AuthorizationState;
+
+            _authCredentials = new AuthCredentials()
+            {
+                Application = app,
+                Url = url,
+                Username = Username,
+                Password = Password
+            };
 		}
 
 		public void SaveToken()
 		{
-			var token = new NamedAuthorizationState(TokenName, _authorizationState);
+			var token = new NamedAuthorizationState(TokenName, _authorizationState, _authCredentials);
 
 			var message = new TokenAdded
 			{
